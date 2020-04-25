@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">RideSharing</string>
+    <string name="enable_gps">Enable GPS</string>
 </resources>
