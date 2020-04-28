@@ -3,6 +3,7 @@ package com.mindorks.ridesharing.ui.maps
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Bundle
 import android.os.Looper
 import android.util.Log
@@ -25,10 +26,7 @@ import com.google.android.libraries.places.widget.AutocompleteActivity
 import com.google.android.libraries.places.widget.model.AutocompleteActivityMode
 import com.mindorks.ridesharing.R
 import com.mindorks.ridesharing.data.network.NetworkServices
-import com.mindorks.ridesharing.utils.Constants
-import com.mindorks.ridesharing.utils.MapUtils
-import com.mindorks.ridesharing.utils.PermissionUtils
-import com.mindorks.ridesharing.utils.ViewUtils
+import com.mindorks.ridesharing.utils.*
 import kotlinx.android.synthetic.main.activity_maps.*
 
 class MapsActivity : AppCompatActivity(),MapsView, OnMapReadyCallback {
@@ -48,7 +46,14 @@ class MapsActivity : AppCompatActivity(),MapsView, OnMapReadyCallback {
     private var currentLatLng : LatLng? = null
     private var pickUpLatLng : LatLng? = null
     private var dropLatLng : LatLng? = null
+    private var greyPolyLine: Polyline? = null
+    private var blackPolyLine: Polyline? = null
+    private var originMarker: Marker? = null
+    private var destinationMarker: Marker? = null
+    private var movingCabMarker: Marker? = null
     private val nearByCabsMarkerList = arrayListOf<Marker>()
+    private var previousLatlngFromServer: LatLng? = null
+    private var currentLatlngFromServer: LatLng? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,18 +76,52 @@ class MapsActivity : AppCompatActivity(),MapsView, OnMapReadyCallback {
         dropTextView.setOnClickListener {
             launchLocationAutocompleteActivity(DROP_REQUEST_CODE)
         }
-//        requestCabButton.setOnClickListener {
-//            statusTextView.visibility = View.VISIBLE
-//            statusTextView.text = getString(R.string.requesting_your_cab)
-//            requestCabButton.isEnabled = false
-//            pickUpTextView.isEnabled = false
-//            dropTextView.isEnabled = false
-//            presenter.requestCab(pickUpLatLng!!, dropLatLng!!)
-//        }
-//
-//        nextRideButton.setOnClickListener {
-//            reset()
-//        }
+        requestCabButton.setOnClickListener {
+            statusTextView.visibility = View.VISIBLE
+            statusTextView.text = getString(R.string.requesting_your_cab)
+            requestCabButton.isEnabled = false
+            pickUpTextView.isEnabled = false
+            dropTextView.isEnabled = false
+            presenter.requestCab(pickUpLatLng!!, dropLatLng!!)
+        }
+
+        nextRideButton.setOnClickListener {
+            reset()
+        }
+    }
+
+    private fun reset() {
+        statusTextView.visibility = View.GONE
+        nextRideButton.visibility = View.GONE
+        nearByCabsMarkerList.forEach {
+            it.remove()
+        }
+        nearByCabsMarkerList.clear()
+        currentLatlngFromServer = null
+        previousLatlngFromServer = null
+        if (currentLatLng != null){
+            moveCamera(currentLatLng)
+            animateCamera(currentLatLng)
+            setCurrentLocationAsPickup()
+            presenter.requestNearByCabs(currentLatLng!!)
+        } else {
+            pickUpTextView.text = ""
+        }
+
+        pickUpTextView.isEnabled = true
+        dropTextView.isEnabled = true
+        dropTextView.text = ""
+        movingCabMarker?.remove()
+        greyPolyLine?.remove()
+        blackPolyLine?.remove()
+        originMarker?.remove()
+        destinationMarker?.remove()
+        dropLatLng = null
+        greyPolyLine = null
+        blackPolyLine = null
+        originMarker = null
+        destinationMarker = null
+        movingCabMarker = null
     }
 
     private fun launchLocationAutocompleteActivity(requestCode: Int) {
@@ -200,12 +239,12 @@ class MapsActivity : AppCompatActivity(),MapsView, OnMapReadyCallback {
                         PICKUP_REQUEST_CODE -> {
                             pickUpTextView.text = place.name
                             pickUpLatLng = place.latLng
-//                            checkAndShowRequestButton()
+                            checkAndShowRequestButton()
                         }
                         DROP_REQUEST_CODE -> {
                             dropTextView.text = place.name
                             dropLatLng = place.latLng
-//                            checkAndShowRequestButton()
+                            checkAndShowRequestButton()
                         }
                     }
                 }
@@ -221,6 +260,18 @@ class MapsActivity : AppCompatActivity(),MapsView, OnMapReadyCallback {
         }
     }
 
+    private fun checkAndShowRequestButton() {
+        if (pickUpLatLng != null && dropLatLng != null) {
+            requestCabButton.visibility = View.VISIBLE
+            requestCabButton.isEnabled = true
+        }
+    }
+
+    private fun addOriginDestinationMarkerandGet(latLng: LatLng?): Marker {
+        val bitmapDescriptor = BitmapDescriptorFactory.fromBitmap(MapUtils.getDestinationBitmap())
+        return mMap.addMarker(MarkerOptions().position(latLng!!).flat(true).icon(bitmapDescriptor))
+    }
+
     override fun onDestroy() {
         presenter.onDetach()
         super.onDestroy()
@@ -232,6 +283,126 @@ class MapsActivity : AppCompatActivity(),MapsView, OnMapReadyCallback {
             val nearbyCabMarker = addCarMarkerandGet(latlng)
             nearByCabsMarkerList.add(nearbyCabMarker)
         }
+    }
+
+    override fun informCabBooked() {
+        nearByCabsMarkerList.forEach {
+            it.remove()
+        }
+        nearByCabsMarkerList.clear()
+        requestCabButton.visibility = View.GONE
+        statusTextView.text = getString(R.string.your_cab_is_booked)
+    }
+
+    override fun showPath(latlngList: List<LatLng>) {
+        Log.e("TAG", "showPath")
+        val builder = LatLngBounds.builder()
+        for (latLng in latlngList) {
+            builder.include(latLng)
+        }
+        val bound = builder.build()
+        mMap.animateCamera(CameraUpdateFactory.newLatLngBounds(bound, 2))
+        val polyLineOptions = PolylineOptions()
+        polyLineOptions.run {
+            color(Color.GRAY)
+            width(5f)
+            addAll(latlngList)
+        }
+        greyPolyLine = mMap.addPolyline(polyLineOptions)
+        val blackPolyLineOptions = PolylineOptions()
+        polyLineOptions.run {
+            color(Color.GRAY)
+            width(5f)
+        }
+        blackPolyLine = mMap.addPolyline(blackPolyLineOptions)
+//
+        originMarker = addOriginDestinationMarkerandGet(latlngList[0])
+        originMarker?.setAnchor(0.5f, 0.5f)
+        destinationMarker = addOriginDestinationMarkerandGet(latlngList[latlngList.size - 1])
+        destinationMarker?.setAnchor(0.5f, 0.5f)
+
+        val polyLineAnimator = AnimationUtils.polyLineAnimator()
+        polyLineAnimator.addUpdateListener {
+            val percentValue = (it.animatedValue as Int)
+            val index = (greyPolyLine?.points?.size)!! * (percentValue / 100.0f).toInt()
+            blackPolyLine?.points = greyPolyLine?.points!!.subList(0, index)
+        }
+        polyLineAnimator.start()
+    }
+
+    override fun updateCabLocation(latLng: LatLng) {
+        if (movingCabMarker == null) {
+            movingCabMarker = addCarMarkerandGet(latLng)
+        }
+        if (previousLatlngFromServer == null) {
+            currentLatlngFromServer = latLng
+            previousLatlngFromServer = currentLatlngFromServer
+            movingCabMarker?.position = currentLatlngFromServer
+            movingCabMarker?.setAnchor(0.5f, 0.5f)
+            animateCamera(currentLatlngFromServer)
+        } else {
+            previousLatlngFromServer = currentLatlngFromServer
+            currentLatlngFromServer = latLng
+            val valueAnimator = AnimationUtils.cabAnimator()
+            valueAnimator.addUpdateListener { va ->
+                if (currentLatlngFromServer != null && previousLatlngFromServer != null) {
+                    val multplier = va.animatedFraction
+                    val nextLocation = LatLng(
+                        multplier * currentLatlngFromServer!!.latitude + (1 - multplier) * previousLatlngFromServer!!.latitude,
+                        multplier * currentLatlngFromServer!!.longitude + (1 - multplier) * previousLatlngFromServer!!.longitude
+                    )
+                    movingCabMarker?.position = nextLocation
+                    movingCabMarker?.setAnchor(0.5f, 0.5f)
+                    val rotation = MapUtils.getRotation(
+                        previousLatlngFromServer!!,
+                        nextLocation
+                    )
+                    if (!rotation.isNaN()) {
+                        movingCabMarker?.rotation = rotation
+                    }
+                    animateCamera(nextLocation)
+                }
+            }
+            valueAnimator.start()
+
+        }
+    }
+
+    override fun informCabIsArriving() {
+        statusTextView.text = getString(R.string.your_cab_is_arriving)
+    }
+
+    override fun informCabArrived() {
+        statusTextView.text = getString(R.string.your_cab_has_arrived)
+        greyPolyLine?.remove()
+        blackPolyLine?.remove()
+        originMarker?.remove()
+        destinationMarker?.remove()
+    }
+
+    override fun informTripStart() {
+        statusTextView.text = getString(R.string.you_are_on_a_trip)
+        previousLatlngFromServer = null
+    }
+
+    override fun informTripEnd() {
+        statusTextView.text  = getString(R.string.trip_end)
+        nextRideButton.visibility = View.VISIBLE
+        greyPolyLine?.remove()
+        blackPolyLine?.remove()
+        originMarker?.remove()
+        destinationMarker?.remove()
+    }
+
+    override fun showRoutesNotAvailableError() {
+        val error = getString(R.string.route_not_available_choose_different_locations)
+        Toast.makeText(this, error, Toast.LENGTH_LONG).show()
+        reset()
+    }
+
+    override fun showDirectionApiFailedError(string: String) {
+        Toast.makeText(this, string, Toast.LENGTH_LONG).show()
+        reset()
     }
 
     private fun addCarMarkerandGet(latLng: LatLng?): Marker {

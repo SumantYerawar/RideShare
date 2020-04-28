@@ -19,7 +19,4 @@ object Constants {
     const val ERROR = "error"
     const val ROUTES_NOT_AVAILABLE = "routesNotAvailable"
     const val DIRECTION_API_FAILED = "directionApiFailed"
-    const val LOCATION_PERMISSION_REQUEST_CODE = 909
-//    const val PICKUP_REQUEST_CODE = 1
-//    const val DROP_REQUEST_CODE = 2
 }
